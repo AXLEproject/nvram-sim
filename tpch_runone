@@ -13,8 +13,7 @@ SCRIPTDIR=$(cd "$SCRIPTDIR"; pwd)
 PIN_EXE=$SCRIPTDIR/pin/pin
 PIN_NVRAMSIM=$SCRIPTDIR/obj-intel64/nvramsim.so
 
-BASEDIR=$(cd "$(dirname $0)"; pwd)
-cd $BASEDIR
+cd "$SCRIPTDIR"
 
 PGPORT_PROCLIST="$(lsof -i tcp:$PGPORT | tail -n +2 | awk '{print $2}')"
 if [[ $(echo "$PGPORT_PROCLIST" | wc -w) -gt 0 ]];
@@ -55,18 +54,15 @@ while ! pg_ctl status -D $PGDATADIR | grep "server is running" -q; do
   sleep 1
 done
 pg_ctl -D $PGDATADIR status
-sleep 2
+sleep 4
 f="queries/q$ii.sql"
 echo "Running query: $i"
 /usr/bin/time -f '%e\n%Uuser %Ssystem %Eelapsed %PCPU (%Xtext+%Ddata %Mmax)k'\
   -o query_exec_seconds.txt \
-  psql -p $PGPORT tpch <$BASEDIR/$f
+  psql -p $PGPORT tpch <"$SCRIPTDIR/$f"
 echo "Asking Pg server to stop"
 pg_ctl stop -D $PGDATADIR
 echo "Pg server stopped"
-#cgf="../q${ii}-callgraph.pdf"
-#echo "Creating the call graph: $cgf"
-#perf script | python $BASEDIR/gprof2dot.py -f perf | dot -Tpdf -o $cgf &
 cd - >/dev/null
 
 for p in $(jobs -p);

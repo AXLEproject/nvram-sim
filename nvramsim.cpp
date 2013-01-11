@@ -6,7 +6,9 @@
  */
 
 #include <assert.h>
+#include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <iostream>
 #include <fstream>
 #include <map>
@@ -19,10 +21,9 @@ REG memref_log_ptr;
 
 KNOB<string> KnobOutputFile(KNOB_MODE_WRITEONCE, "pintool", "o", "memtrace.out", "output file");
 
-int main_PID = 0;
-
 uint64_t num_instr = 0;
 uint64_t num_memrefs = 0;
+char base_directory[1024];
 
 struct MemRefs
 {
@@ -118,32 +119,38 @@ void InstrumentTrace(TRACE trace, void *)
         }
         BBL_InsertCall(bbl, IPOINT_ANYWHERE, (AFUNPTR)CountInstr, IARG_UINT32, num_instr_bbl, IARG_END);
     }
-
     mem_instr.InstrumentAll();
 }
 
+
 VOID stats_print()
 {
-    fprintf(stderr, "Execution stats:\n");
-    fprintf(stderr, "  total %lu instructions\n", num_instr);
-    fprintf(stderr, "  total %lu memory references\n", num_memrefs);
     double exec_time = double(0.42*num_instr + 2*num_memrefs) / (2*1024*1024*1024LLU);
-    fprintf(stderr, "Estimated execution time on an in-order processor at 2GHz with 1 IPC:\n");
-    fprintf(stderr, "  %4.2lf seconds\n", exec_time);
+    char fname_stats[sizeof(base_directory)+255];
+    char *pos = strcpy(fname_stats, base_directory) + strlen(base_directory);
+    *pos = '/';
+    pos++;
+    snprintf(pos, sizeof(fname_stats) - (pos - fname_stats), "nvramsim_stats_%d.txt", PIN_GetPid());
+    fprintf(stderr, "NVRAMSIM: process %d is saving statistics to file '%s'\n", PIN_GetPid(), fname_stats);
+    FILE *fstats = fopen(fname_stats, "wb");
+    fprintf(fstats, "Process ID: %d\n", PIN_GetPid());
+    fprintf(fstats, "Instructions: %lu\n", num_instr);
+    fprintf(fstats, "Memory references: %lu\n", num_memrefs);
+    fprintf(fstats, "Estimated execution time on an in-order processor at 2GHz with 1 IPC: %4.2lf seconds\n", exec_time);
+    fclose(fstats);
 }
 
 VOID ThreadStart(THREADID tid, CONTEXT *ctxt, INT32 flags, VOID *v)
 {
-    fprintf(stderr, "NVRAMSIM: thread start; num_instr %lu, num_memrefs %lu\n", num_instr, num_memrefs);
-    if (!main_PID) main_PID = PIN_GetPid();
+//    fprintf(stderr, "NVRAMSIM: thread start; num_instr %lu, num_memrefs %lu\n", num_instr, num_memrefs);
     MemRefs * memrefs = new MemRefs();
     PIN_SetContextReg(ctxt, memref_log_ptr, reinterpret_cast<ADDRINT>(memrefs));
 }
 
 VOID ThreadFini(THREADID tid, const CONTEXT *ctxt, INT32 code, VOID *v)
 {
-    fprintf(stderr, "NVRAMSIM: thread %u finish (pid %u)\n", PIN_ThreadId(), PIN_GetPid());
-    fprintf(stderr, "NVRAMSIM: finish: num_instr %lu, num_memrefs %lu\n", num_instr, num_memrefs);
+//    fprintf(stderr, "NVRAMSIM: thread %u finish (pid %u)\n", PIN_ThreadId(), PIN_GetPid());
+//    fprintf(stderr, "NVRAMSIM: finish: num_instr %lu, num_memrefs %lu\n", num_instr, num_memrefs);
     MemRefs *memrefs = reinterpret_cast<MemRefs *>(PIN_GetContextReg(ctxt, memref_log_ptr));
     num_memrefs += memrefs->memrefs_list.size();
     memrefs->Reset();
@@ -165,11 +172,8 @@ VOID SyscallBefore(THREADID tid, CONTEXT *ctxt, SYSCALL_STANDARD scStd,
     memrefs->Reset();
 }
 
-VOID AppExit(INT32 code, VOID *v)
+VOID ProcessExit(INT32 code, VOID *v)
 {
-    if (PIN_GetPid() != main_PID)
-        return;
-//    callStack.DumpStack(&cerr);
     stats_print();
 }
 
@@ -182,14 +186,32 @@ pid_t parent_pid;
 
 VOID BeforeFork(THREADID threadid, const CONTEXT* ctxt, VOID * arg)
 {
-    GetLock(&lock, threadid+1);
-    cerr << "TOOL: Before fork." << endl;
-    ReleaseLock(&lock);
+//    GetLock(&lock, threadid+1);
+//    cerr << "TOOL: Before fork." << endl;
+//    ReleaseLock(&lock);
     parent_pid = PIN_GetPid();
 }
 
+VOID AfterForkInChild(THREADID threadid, const CONTEXT* ctxt, VOID * arg)
+{
+//    GetLock(&lock, threadid+1);
+//    cerr << "TOOL: After fork in child." << endl;
+//    ReleaseLock(&lock);
+
+    if ((PIN_GetPid() == parent_pid) || (getppid() != parent_pid))
+    {
+        cerr << "PIN_GetPid() fails in child process" << endl;
+        exit(-1);
+    }
+    // reset the stats in this process
+    num_instr = 0;
+    num_memrefs = 0;
+}
 int main(int argc, char * argv[])
 {
+    if (!getcwd(base_directory, sizeof(base_directory)))
+        perror("getcwd() error");
+
     if( PIN_Init(argc,argv) )
     {
         return Usage();
@@ -207,10 +229,11 @@ int main(int argc, char * argv[])
 
     TRACE_AddInstrumentFunction(InstrumentTrace, 0);
     PIN_AddForkFunction(FPOINT_BEFORE, BeforeFork, 0);
+    PIN_AddForkFunction(FPOINT_AFTER_IN_CHILD, AfterForkInChild, 0);
     PIN_AddThreadStartFunction(ThreadStart, 0);
     PIN_AddSyscallEntryFunction(SyscallBefore, 0);
     PIN_AddThreadFiniFunction(ThreadFini, 0);
-    PIN_AddFiniFunction(AppExit, 0);
+    PIN_AddFiniFunction(ProcessExit, 0);
 
     PIN_StartProgram();
 
