@@ -1,0 +1,76 @@
+#!/bin/bash
+
+if [ $# -ne 1 ]; then
+  echo "Please provide the number of the query you wish to run, e.g.:"
+  echo "$0 6"
+  exit 1
+fi
+PERFDATADIR=perfdata
+PGDATADIR=$HOME/pg92/pgdata
+PGPORT=5442
+SCRIPTDIR=$(dirname $0)
+SCRIPTDIR=$(cd "$SCRIPTDIR"; pwd)
+PIN_EXE=$SCRIPTDIR/pin/pin
+PIN_NVRAMSIM=$SCRIPTDIR/obj-intel64/nvramsim.so
+
+BASEDIR=$(cd "$(dirname $0)"; pwd)
+cd $BASEDIR
+
+PGPORT_PROCLIST="$(lsof -i tcp:$PGPORT | tail -n +2 | awk '{print $2}')"
+if [[ $(echo "$PGPORT_PROCLIST" | wc -w) -gt 0 ]];
+then
+  echo "The following processes have taken port $PGPORT"
+  echo "Please terminate them before running this script"
+  echo
+  for p in $PGPORT_PROCLIST;
+  do
+    ps -o pid,cmd $p
+  done
+  exit -1
+fi
+
+#
+# Check if a Postgres server is running in the same directory
+#
+if pg_ctl status -D $PGDATADIR | grep "server is running" -q; then
+  echo "A Postgres server is already running in the selected directory. Exiting."
+  pg_ctl status -D $PGDATADIR
+  exit -2
+fi
+
+ii=$(printf "%02d" $1)
+dir="$PERFDATADIR/q${ii}"
+mkdir -p $dir
+cd $dir
+### get statistics e.g. IPC, cache hits/misses
+# perf stat -B --log-fd 2 -- postgres -D $PGDATADIR -p $PGPORT &
+### for callgraph
+# perf record -g postgres -D $PGDATADIR -p $PGPORT &
+### run under pin
+$PIN_EXE -follow_execv -mt -t "$PIN_NVRAMSIM" -- postgres -D $PGDATADIR -p $PGPORT &
+pg_ctl -D $PGDATADIR status
+while ! pg_ctl status -D $PGDATADIR | grep "server is running" -q; do
+  echo "Waiting for the Postgres server to start"
+  pg_ctl -D $PGDATADIR status
+  sleep 1
+done
+pg_ctl -D $PGDATADIR status
+sleep 2
+f="queries/q$ii.sql"
+echo "Running query: $i"
+/usr/bin/time -f '%e\n%Uuser %Ssystem %Eelapsed %PCPU (%Xtext+%Ddata %Mmax)k'\
+  -o query_exec_seconds.txt \
+  psql -p $PGPORT tpch <$BASEDIR/$f
+echo "Asking Pg server to stop"
+pg_ctl stop -D $PGDATADIR
+echo "Pg server stopped"
+#cgf="../q${ii}-callgraph.pdf"
+#echo "Creating the call graph: $cgf"
+#perf script | python $BASEDIR/gprof2dot.py -f perf | dot -Tpdf -o $cgf &
+cd - >/dev/null
+
+for p in $(jobs -p);
+do
+  wait $p
+done
+
