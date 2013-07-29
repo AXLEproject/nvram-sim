@@ -2,81 +2,75 @@
 ## To build the tool, execute the make command:
 ##
 ##      make
-## or
-##      make PIN_HOME=<top-level directory where Pin was installed>
 ##
 ## After building your tool, you would invoke Pin like this:
 ##
-##      $PIN_HOME/pin -t nvramsim -- /bin/ls
+##      $PIN_ROOT/pin -t nvramsim -- /bin/ls
 ##
 
-PINVER="pin-2.12-55942-gcc.4.4.7-linux"
-PIN_HOME ?= pin
-
-PIN_KIT=$(PIN_HOME)
+############## CONFIG START #####################
+PINVER="pin-2.12-58423-gcc.4.4.7-linux"
+PIN_ROOT ?= pin
+PIN_KIT=$(PIN_ROOT)
 
 TARGET_COMPILER?=gnu
-
-CXXFLAGS ?= -Wall -Werror -Wno-unknown-pragmas $(DBG) $(OPT)
--include $(PIN_HOME)/source/tools/makefile.gnu.config
+CXX := g++
+PIN_LD := g++
 
 TOOL_ROOTS = nvramsim
+## Additional dependencies of this tool (c/cpp/object files)
+DEP_ROOTS = cache-sim/cache cache-sim/logger
+############## CONFIG END #####################
 
-TOOLS = $(TOOL_ROOTS:%=$(OBJDIR)%$(PINTOOL_SUFFIX))
+OBJDIR := obj-intel64
+TOOLS = $(TOOL_ROOTS:%=$(OBJDIR)/%.so)
+DEP_SRCS := $(foreach d, $(DEP_ROOTS), $(wildcard $(d).cpp)) $(foreach d, $(DEP_ROOTS), $(wildcard $(d).[ch]))
+DEP_OBJS = $(DEP_ROOTS:%=$(OBJDIR)/%.o)
 
-EXTRA_LIBS =
+#DBG := -g -rdynamic -DDEBUG=1
+DBG := -g -rdynamic
+EXTRA_CXXFLAGS := -Wall -Werror -Wno-unknown-pragmas -fno-stack-protector
+PIN_CXXFLAGS := -DBIGARRAY_MULTIPLIER=1 -DUSING_XED -DTARGET_IA32E -DHOST_IA32E -fPIC -DTARGET_LINUX
+PIN_INCLUDES := -Ipin/source/include/pin -Ipin/source/include/pin/gen -Ipin/extras/components/include -Ipin/extras/xed2-intel64/include -Ipin/source/tools/InstLib
 
-## Additional objects for building this tool, e.g.
-# OBJS = $(OBJDIR)CallStack.o
-
-##############################################################
-#
-# build rules
-#
-##############################################################
+PIN_OPT := -O3 -fomit-frame-pointer -fno-strict-aliasing
+PIN_LDFLAGS := -shared -Wl,--hash-style=sysv -Wl,-rpath=pin/intel64/runtime/cpplibs -Wl,-Bsymbolic -Wl,--version-script=pin/source/include/pin/pintool.ver
+PIN_LPATHS := -Lpin/intel64/runtime/cpplibs -Lpin/intel64/lib -Lpin/intel64/lib-ext -Lpin/intel64/runtime/glibc -Lpin/extras/xed2-intel64/lib
+PIN_LIBS := -lpin -lxed -ldwarf -lelf -ldl
+EXTRA_LIBS :=
 
 all: pin_check
-tools: $(OBJDIR) $(TOOLS) $(OBJDIR)cp-pin
+tools: $(OBJDIR) $(TOOLS)
 test: $(OBJDIR) $(TOOL_ROOTS:%=%.test)
+
+pin_check:
+	test -d $(PIN_ROOT) || $(MAKE) pin_download
+	$(MAKE) tools
 
 pin_download:
 	@echo "-----------------------"
 	@echo "To use this program, you must agree to the license of the Pin Tool, that you can read at:"
 	@echo "http://software.intel.com/sites/default/files/m/a/d/2/extlicense.txt"
-	@echo "If you do not agree, press Ctrl+C now, to quit"
+	@echo "If you do not agree, press Ctrl+C in the next 2 seconds, to quit"
 	@echo "-----------------------"
 	@sleep 2
-	@wget -nv -c "http://software.intel.com/sites/landingpage/pintool/downloads/$(PINVER).tar.gz"
-	@echo "Unpacking PIN tool"
-	@tar xf "$(PINVER).tar.gz"
-	@ln -sf "$(PINVER)" pin
-
-pin_check:
-ifeq ($(KIT), 1)
-	$(MAKE) tools
-else
-	$(MAKE) pin_download
-	$(MAKE) tools
-endif
-
-nvramsim.test: $(OBJDIR)cp-pin
-	$(MAKE) -k PIN_HOME=$(PIN_HOME)
-
-$(OBJDIR)cp-pin:
-	$(CXX) $(PIN_HOME)/source/tools/Tests/cp-pin.cpp $(APP_CXXFLAGS) -o $(OBJDIR)cp-pin
+	@echo "Downloading and unpacking PIN tool"
+	@wget -nv -c "http://software.intel.com/sites/landingpage/pintool/downloads/$(PINVER).tar.gz" -O- | tar xz
+	@echo "Done. PIN tool is downloaded and ready"
+	@mv "$(PINVER)" pin
 
 $(OBJDIR):
-	mkdir -p $(OBJDIR)
+	@mkdir -p "$(OBJDIR)"
 
-$(OBJDIR)%.o : %.cpp Makefile
-	$(CXX) -c $(CXXFLAGS) $(PIN_CXXFLAGS) ${OUTOPT}$@ $<
+$(OBJDIR)/%.o : %.cpp Makefile $(DEP_SRCS)
+	@mkdir -p "$(shell dirname '$(OBJDIR)/$<')"
+	@$(CXX) $(EXTRA_CXXFLAGS) $(PIN_CXXFLAGS) $(PIN_INCLUDES) $(PIN_OPT) $(DBG) -c $< -o $@
+	@echo "CXX $< -c -o $@"
 
-$(TOOLS): $(PIN_LIBNAMES) $(OBJS)
+$(TOOLS): %.so : %.o $(DEP_OBJS)
+	@${PIN_LD} $(PIN_LDFLAGS) $(LINK_DEBUG) $(DEP_OBJS) -o ${LINK_OUT}$@ $< ${PIN_LPATHS} $(PIN_LIBS) $(EXTRA_LIBS) $(DBG);
+	@echo "LD $< $(DEP_OBJS) -o $@"
 
-$(TOOLS): %$(PINTOOL_SUFFIX) : %.o
-	  ${PIN_LD} $(PIN_LDFLAGS) $(LINK_DEBUG) $(OBJS) ${LINK_OUT}$@ $< ${PIN_LPATHS} $(PIN_LIBS) $(EXTRA_LIBS) $(DBG);
-
-## cleaning
 clean:
-	@rm -rf $(OBJDIR) *.out *.tested *.failed makefile.copy
+	rm -rf $(OBJDIR) *.out *.tested *.failed
 
