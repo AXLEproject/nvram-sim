@@ -1,0 +1,50 @@
+
+==== Simple Pin-tool based simulator to evaluate emerging memory technologies ====
+
+
+== Preparation ==
+
+To compile the simulator with Pin-tool, in theory you only have to run
+
+	make
+
+The Makefile script will see that you don't have the Pin tool installed,
+so it will download and prepare one for you.
+After that, it will proceed and compile the simulator.
+
+== Run a simulation ==
+
+I run simulations like this:
+
+	make && ./pin/pin -t obj-intel64/nvramsim.so -- <command>
+
+After this, the following outputs will be created:
+
+	nvramsim_stats_<PROCESS-ID>.txt
+	stats_cache.txt
+	{stderr} output with some CSV statistics
+
+
+== Workloads preparation ==
+
+You should prepare the workloads once, before running the first simulation ever.
+Preparation includes downloading and/or generating some input files.
+
+To prepare the workloads, run the following command:
+
+	./workloads_prepare
+
+
+== Workload execution ==
+
+I executed the following workloads:
+
+Compression of a large tiff image:
+
+	make && ./pin/pin -t obj-intel64/nvramsim.so -- gzip workloads/hs-2006-10-a-hires_tif.tif -c >/dev/null
+
+Compression of a large jpeg image:
+
+	make && ./pin/pin -t obj-intel64/nvramsim.so -- gzip workloads/isaac_tmo_2012241_lrg.jpg -c >/dev/null
+
+

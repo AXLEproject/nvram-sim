@@ -1,0 +1,20 @@
+#!/bin/sh
+
+BASEDIR=$(dirname "$0")
+cd "$BASEDIR"
+BASEDIR=$(pwd)
+
+mkdir -p workloads
+cd workloads
+
+wget -c http://imgsrc.hubblesite.org/hu/db/images/hs-2006-10-a-hires_tif.tif
+wget -c http://eoimages.gsfc.nasa.gov/images/imagerecords/79000/79008/isaac_tmo_2012241_lrg.jpg
+wget http://archive.ics.uci.edu/ml/machine-learning-databases/msnbc-mld/msnbc990928.seq.gz -O- | gunzip >webserver_log.txt
+wget http://ftp.acc.umu.se/pub/GNOME/sources/gedit/3.0/gedit-3.0.0.tar.gz -O- | gunzip >gedit_src.tar
+
+# 10MB of random data
+dd if=/dev/urandom of=random.data bs=10240 count=1024
+
+# compile linpack
+gcc linpack.c -O3 -o linpack
+
