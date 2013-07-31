@@ -2,6 +2,7 @@ pin-*
 pin
 obj-intel64/
 perfdata/
+workloads/
 
 nvramsim_stats_*.txt
 stats_cache.txt
